@@ -16,7 +16,9 @@ class BulkIndexError(ElasticsearchException):
 
 
 class ScanError(ElasticsearchException):
-    pass
+    def __init__(self, scroll_id, *args, **kwargs):
+        super(ScanError, self).__init__(*args, **kwargs)
+        self.scroll_id = scroll_id
 
 def expand_action(data):
     """
@@ -33,7 +35,8 @@ def expand_action(data):
     op_type = data.pop('_op_type', 'index')
     action = {op_type: {}}
     for key in ('_index', '_parent', '_percolate', '_routing', '_timestamp',
-            '_ttl', '_type', '_version', '_version_type', '_id', '_retry_on_conflict'):
+                '_type', '_version', '_version_type', '_id',
+                '_retry_on_conflict', 'pipeline'):
         if key in data:
             action[op_type][key] = data.pop(key)
 
@@ -95,7 +98,7 @@ def _process_bulk_chunk(client, bulk_actions, raise_on_exception=True, raise_on_
         # deserialize the data back, thisis expensive but only run on
         # errors if raise_on_exception is false, so shouldn't be a real
         # issue
-        bulk_data = iter(map(client.transport.serializer.loads, bulk_actions))
+        bulk_data = map(client.transport.serializer.loads, bulk_actions)
         while True:
             try:
                 # collect all the information about failed actions
@@ -131,7 +134,7 @@ def _process_bulk_chunk(client, bulk_actions, raise_on_exception=True, raise_on_
     if errors:
         raise BulkIndexError('%i document(s) failed to index.' % len(errors), errors)
 
-def streaming_bulk(client, actions, chunk_size=500, max_chunk_bytes=100 * 1014 * 1024,
+def streaming_bulk(client, actions, chunk_size=500, max_chunk_bytes=100 * 1024 * 1024,
         raise_on_error=True, expand_action_callback=expand_action,
         raise_on_exception=True, **kwargs):
     """
@@ -166,7 +169,11 @@ def bulk(client, actions, stats_only=False, **kwargs):
     a more human friendly interface - it consumes an iterator of actions and
     sends them to elasticsearch in chunks. It returns a tuple with summary
     information - number of successfully executed actions and either list of
-    errors or number of errors if `stats_only` is set to `True`.
+    errors or number of errors if ``stats_only`` is set to ``True``. Note that
+    by default we raise a ``BulkIndexError`` when we encounter an error so
+    options like ``stats_only`` only apply when ``raise_on_error`` is set to
+    ``False``.
+
 
     See :func:`~elasticsearch.helpers.streaming_bulk` for more accepted
     parameters
@@ -197,7 +204,7 @@ def bulk(client, actions, stats_only=False, **kwargs):
     return success, failed if stats_only else errors
 
 def parallel_bulk(client, actions, thread_count=4, chunk_size=500,
-        max_chunk_bytes=100 * 1014 * 1024,
+        max_chunk_bytes=100 * 1024 * 1024,
         expand_action_callback=expand_action, **kwargs):
     """
     Parallel version of the bulk helper run in multiple threads at once.
@@ -222,17 +229,20 @@ def parallel_bulk(client, actions, thread_count=4, chunk_size=500,
 
     pool = Pool(thread_count)
 
-    for result in pool.imap(
-        lambda chunk: list(_process_bulk_chunk(client, chunk, **kwargs)),
-        _chunk_actions(actions, chunk_size, max_chunk_bytes, client.transport.serializer)
-        ):
-        for item in result:
-            yield item
+    try:
+        for result in pool.imap(
+            lambda chunk: list(_process_bulk_chunk(client, chunk, **kwargs)),
+            _chunk_actions(actions, chunk_size, max_chunk_bytes, client.transport.serializer)
+            ):
+            for item in result:
+                yield item
 
-    pool.close()
-    pool.join()
+    finally:
+        pool.close()
+        pool.join()
 
-def scan(client, query=None, scroll='5m', raise_on_error=True, preserve_order=False, **kwargs):
+def scan(client, query=None, scroll='5m', raise_on_error=True,
+         preserve_order=False, size=1000, request_timeout=None, clear_scroll=True, **kwargs):
     """
     Simple abstraction on top of the
     :meth:`~elasticsearch.Elasticsearch.scroll` api - a simple iterator that
@@ -254,53 +264,65 @@ def scan(client, query=None, scroll='5m', raise_on_error=True, preserve_order=Fa
         cause the scroll to paginate with preserving the order. Note that this
         can be an extremely expensive operation and can easily lead to
         unpredictable results, use with caution.
+    :arg size: size (per shard) of the batch send at each iteration.
+    :arg request_timeout: explicit timeout for each call to ``scan``
+    :arg clear_scroll: explicitly calls delete on the scroll id via the clear
+        scroll API at the end of the method on completion or error, defaults
+        to true.
 
     Any additional keyword arguments will be passed to the initial
     :meth:`~elasticsearch.Elasticsearch.search` call::
 
         scan(es,
-            query={"match": {"title": "python"}},
+            query={"query": {"match": {"title": "python"}}},
             index="orders-*",
             doc_type="books"
         )
 
     """
     if not preserve_order:
-        kwargs['search_type'] = 'scan'
+        query = query.copy() if query else {}
+        query["sort"] = "_doc"
     # initial search
-    resp = client.search(body=query, scroll=scroll, **kwargs)
+    resp = client.search(body=query, scroll=scroll, size=size,
+                         request_timeout=request_timeout, **kwargs)
 
     scroll_id = resp.get('_scroll_id')
     if scroll_id is None:
         return
 
-    first_run = True
-    while True:
-        # if we didn't set search_type to scan initial search contains data
-        if preserve_order and first_run:
-            first_run = False
-        else:
-            resp = client.scroll(scroll_id, scroll=scroll)
+    try:
+        first_run = True
+        while True:
+            # if we didn't set search_type to scan initial search contains data
+            if first_run:
+                first_run = False
+            else:
+                resp = client.scroll(scroll_id, scroll=scroll, request_timeout=request_timeout)
 
-        for hit in resp['hits']['hits']:
-            yield hit
+            for hit in resp['hits']['hits']:
+                yield hit
 
-        # check if we have any errrors
-        if resp["_shards"]["failed"]:
-            logger.warning(
-                'Scroll request has failed on %d shards out of %d.',
-                resp['_shards']['failed'], resp['_shards']['total']
-            )
-            if raise_on_error:
-                raise ScanError(
-                    'Scroll request has failed on %d shards out of %d.' %
-                    (resp['_shards']['failed'], resp['_shards']['total'])
+            # check if we have any errrors
+            if resp["_shards"]["failed"]:
+                logger.warning(
+                    'Scroll request has failed on %d shards out of %d.',
+                    resp['_shards']['failed'], resp['_shards']['total']
                 )
+                if raise_on_error:
+                    raise ScanError(
+                        scroll_id,
+                        'Scroll request has failed on %d shards out of %d.' %
+                            (resp['_shards']['failed'], resp['_shards']['total'])
+                    )
 
-        scroll_id = resp.get('_scroll_id')
-        # end of scroll
-        if scroll_id is None or not resp['hits']['hits']:
-            break
+            scroll_id = resp.get('_scroll_id')
+            # end of scroll
+            if scroll_id is None or not resp['hits']['hits']:
+                break
+    finally:
+        if scroll_id and clear_scroll:
+            client.clear_scroll(body={'scroll_id': [scroll_id]}, ignore=(404, ))
 
 def reindex(client, source_index, target_index, query=None, target_client=None,
         chunk_size=500, scroll='5m', scan_kwargs={}, bulk_kwargs={}):
@@ -309,6 +331,12 @@ def reindex(client, source_index, target_index, query=None, target_client=None,
     Reindex all documents from one index that satisfy a given query
     to another, potentially (if `target_client` is specified) on a different cluster.
     If you don't specify the query you will reindex all the documents.
+
+    Since ``2.3`` a :meth:`~elasticsearch.Elasticsearch.reindex` api is
+    available as part of elasticsearch itself. It is recommended to use the api
+    instead of this helper wherever possible. The helper is here mostly for
+    backwards compatibility and for situations where more flexibility is
+    needed.
 
     .. note::
 
@@ -335,7 +363,6 @@ def reindex(client, source_index, target_index, query=None, target_client=None,
         query=query,
         index=source_index,
         scroll=scroll,
-        fields=('_source', '_parent', '_routing', '_timestamp'),
         **scan_kwargs
     )
     def _change_doc_index(hits, index):

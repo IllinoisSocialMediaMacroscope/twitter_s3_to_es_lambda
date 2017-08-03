@@ -1,6 +1,7 @@
 import time
 import random
 import logging
+import threading
 
 try:
     from Queue import PriorityQueue, Empty
@@ -58,12 +59,12 @@ class RoundRobinSelector(ConnectionSelector):
     """
     def __init__(self, opts):
         super(RoundRobinSelector, self).__init__(opts)
-        self.rr = -1
+        self.data = threading.local()
 
     def select(self, connections):
-        self.rr += 1
-        self.rr %= len(connections)
-        return connections[self.rr]
+        self.data.rr = getattr(self.data, 'rr', -1) + 1
+        self.data.rr %= len(connections)
+        return connections[self.data.rr]
 
 class ConnectionPool(object):
     """
@@ -222,11 +223,17 @@ class ConnectionPool(object):
 
         # only call selector if we have a selection
         if len(connections) > 1:
-            return self.selector.select(self.connections)
+            return self.selector.select(connections)
 
         # only one connection, no need for a selector
         return connections[0]
 
+    def close(self):
+        """
+        Explicitly closes connections
+        """
+        for conn in self.orig_connections:
+            conn.close()
 
 class DummyConnectionPool(ConnectionPool):
     def __init__(self, connections, **kwargs):
@@ -240,6 +247,12 @@ class DummyConnectionPool(ConnectionPool):
 
     def get_connection(self):
         return self.connection
+
+    def close(self):
+        """
+        Explicitly closes connections
+        """
+        self.connection.close()
 
     def _noop(self, *args, **kwargs):
         pass

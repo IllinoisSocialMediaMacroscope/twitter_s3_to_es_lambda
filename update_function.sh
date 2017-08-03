@@ -17,4 +17,4 @@
 # }
 
 
-aws lambda update-function-code --function-name send-twitter-stream-to-es --zip-file fileb://my-s3-twitter-to-es-python.zip
+aws lambda update-function-code --function-name send-twitter-stream-to-es --zip-file fileb://my-s3-twitter-to-es-python.zip --region us-west-2

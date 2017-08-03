@@ -2,11 +2,20 @@
 Created on Oct 8, 2015
 
 @author: mentzera
+
+Modifications
+08/01/2017 JMT added code to set default encoding to UTF8
 '''
 
 import json
 import boto3
 import twitter_to_es
+
+# the next 3 lines change default encoding to UTF-8
+import sys
+reload(sys)
+sys.setdefaultencoding('UTF8')
+
 
 s3 = boto3.client('s3')
 

@@ -2,13 +2,16 @@
 Created on Oct 8, 2015
 
 @author: mentzera
+
+08/01/2017	JMT	added create_awsauth functions and modifiedy es object creatation to use http authorization.
 '''
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, RequestsHttpConnection
 from elasticsearch.helpers import bulk
 import config
 from elasticsearch.exceptions import ElasticsearchException
 from tweet_utils import get_tweet, id_field, tweet_mapping
-
+from requests_aws4auth import AWS4Auth
+import os
 
 index_name = 'twitter'
 doc_type = 'tweet'
@@ -21,9 +24,17 @@ def create_index(es,index_name,mapping):
     print('creating index {}...'.format(index_name))
     es.indices.create(index_name, body = {'mappings': mapping})
 
+def create_awsauth():
+    AWS_ACCESS_KEY_ES = os.environ["AWS_ACCESS_KEY_ES"]
+    AWS_SECRET_KEY_ES = os.environ["AWS_SECRET_KEY_ES"]
+    AWS_REGION_ES =     os.environ["AWS_REGION_ES"]
+    return AWS4Auth(AWS_ACCESS_KEY_ES, AWS_SECRET_KEY_ES, AWS_REGION_ES, 'es')
+
 
 def load(tweets):    
-    es = Elasticsearch(host = config.es_host, port = config.es_port)
+    # es = Elasticsearch(host = config.es_host, port = config.es_port)
+    awsauth=create_awsauth()
+    es = Elasticsearch(hosts=[{'host': config.es_host, 'port': config.es_port}],http_auth=awsauth,use_ssl=True,verify_certs=True,connection_class=RequestsHttpConnection)
 
     if es.indices.exists(index_name):
         print ('index {} already exists'.format(index_name))

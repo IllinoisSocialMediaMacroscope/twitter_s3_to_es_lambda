@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 from collections import Mapping, MutableMapping
 try:
     from threading import RLock
@@ -133,7 +134,7 @@ class HTTPHeaderDict(MutableMapping):
 
     def __init__(self, headers=None, **kwargs):
         super(HTTPHeaderDict, self).__init__()
-        self._container = {}
+        self._container = OrderedDict()
         if headers is not None:
             if isinstance(headers, HTTPHeaderDict):
                 self._copy_from(headers)
@@ -143,7 +144,7 @@ class HTTPHeaderDict(MutableMapping):
             self.extend(kwargs)
 
     def __setitem__(self, key, val):
-        self._container[key.lower()] = (key, val)
+        self._container[key.lower()] = [key, val]
         return self._container[key.lower()]
 
     def __getitem__(self, key):
@@ -167,7 +168,7 @@ class HTTPHeaderDict(MutableMapping):
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    if not PY3: # Python 2
+    if not PY3:  # Python 2
         iterkeys = MutableMapping.iterkeys
         itervalues = MutableMapping.itervalues
 
@@ -214,18 +215,11 @@ class HTTPHeaderDict(MutableMapping):
         'bar, baz'
         """
         key_lower = key.lower()
-        new_vals = key, val
+        new_vals = [key, val]
         # Keep the common case aka no item present as fast as possible
         vals = self._container.setdefault(key_lower, new_vals)
         if new_vals is not vals:
-            # new_vals was not inserted, as there was a previous one
-            if isinstance(vals, list):
-                # If already several items got inserted, we have a list
-                vals.append(val)
-            else:
-                # vals should be a tuple then, i.e. only one item so far
-                # Need to convert the tuple to list for further extension
-                self._container[key_lower] = [vals[0], vals[1], val]
+            vals.append(val)
 
     def extend(self, *args, **kwargs):
         """Generic import function for any type of header-like object.
@@ -234,7 +228,7 @@ class HTTPHeaderDict(MutableMapping):
         """
         if len(args) > 1:
             raise TypeError("extend() takes at most 1 positional "
-                            "arguments ({} given)".format(len(args)))
+                            "arguments ({0} given)".format(len(args)))
         other = args[0] if len(args) >= 1 else ()
 
         if isinstance(other, HTTPHeaderDict):
@@ -253,23 +247,25 @@ class HTTPHeaderDict(MutableMapping):
         for key, value in kwargs.items():
             self.add(key, value)
 
-    def getlist(self, key):
+    def getlist(self, key, default=__marker):
         """Returns a list of all the values for the named field. Returns an
         empty list if the key doesn't exist."""
         try:
             vals = self._container[key.lower()]
         except KeyError:
-            return []
+            if default is self.__marker:
+                return []
+            return default
         else:
-            if isinstance(vals, tuple):
-                return [vals[1]]
-            else:
-                return vals[1:]
+            return vals[1:]
 
     # Backwards compatibility for httplib
     getheaders = getlist
     getallmatchingheaders = getlist
     iget = getlist
+
+    # Backwards compatibility for http.cookiejar
+    get_all = getlist
 
     def __repr__(self):
         return "%s(%s)" % (type(self).__name__, dict(self.itermerged()))
@@ -304,7 +300,7 @@ class HTTPHeaderDict(MutableMapping):
         return list(self.iteritems())
 
     @classmethod
-    def from_httplib(cls, message): # Python 2
+    def from_httplib(cls, message):  # Python 2
         """Read headers from a Python 2 httplib message object."""
         # python2.7 does not expose a proper API for exporting multiheaders
         # efficiently. This function re-reads raw lines from the message
