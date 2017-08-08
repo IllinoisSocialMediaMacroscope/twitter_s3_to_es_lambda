@@ -53,14 +53,18 @@ def load(tweets):
     bulk_data = []
     list_size = len(tweets)
     for doc in tweets:
-        tweet = get_tweet(doc)
-        bulk_doc = {
-            "_index": index_name,
-            "_type": doc_type,
-            "_id": tweet[id_field],
-            "_source": tweet
-            }
-        bulk_data.append(bulk_doc)
+        try:
+            tweet = get_tweet(doc)
+            bulk_doc = {
+                "_index": index_name,
+                "_type": doc_type,
+                "_id": tweet[id_field],
+                "_source": tweet
+                }
+            bulk_data.append(bulk_doc)
+        except Exception as e:
+            print ("A single Tweet Doc failed to be loaded to Elasticsearch, tweet id is: "+doc['id_str']+" Exception is: " + str(e))
+        
         counter+=1
         
         if counter % bulk_chunk_size == 0 or counter == list_size:

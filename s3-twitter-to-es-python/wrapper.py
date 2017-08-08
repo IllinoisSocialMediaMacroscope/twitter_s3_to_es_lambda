@@ -34,7 +34,10 @@ bucket = 'store-twitter-stream'
 # key = 'twitter/raw-data/2017/07/28/15/twitter-delivery-stream-1-2017-07-28-15-46-45-c7deaace-4db4-4711-b07c-08bbbf3fe451'
 # key = 'twitter/raw-data/2017/08/01/15/twitter-delivery-stream-1-2017-08-01-15-00-56-f458fe4e-c192-458b-a42f-1512f8a18b95'
 # key = 'twitter/raw-data/2017/08/01/15/twitter-delivery-stream-1-2017-08-01-15-05-56-89a3c060-7119-4332-a034-5f1089a86335'
-key = 'twitter/raw-data/2017/08/01/15/twitter-delivery-stream-1-2017-08-01-15-31-01-274bbadb-54c9-4f1d-b5aa-c0b7d675622e'
+# key = 'twitter/raw-data/2017/07/20/00/twitter-delivery-stream-1-2017-07-20-00-01-21-30463ecb-fdf1-4ac8-810c-2e8f85123cb0'
+# key = 'twitter/raw-data/2017/07/20/21/twitter-delivery-stream-1-2017-07-20-21-04-20-8bba6196-cdb2-4daa-a64a-10c8b06314ff'
+# key = 'twitter/raw-data/2017/07/21/00/twitter-delivery-stream-1-2017-07-21-00-09-56-0d959232-f4cd-440e-b2b3-ac9b95aa2a04'
+key = 'twitter/raw-data/2017/07/22/18/twitter-delivery-stream-1-2017-07-22-18-03-16-8baafc4a-f1ee-46e2-b2f7-3ebc45eaabcb'
 s3 = boto3.client('s3')
 response = s3.get_object(Bucket=bucket, Key=key)
 s3_file_content = response['Body'].read()
