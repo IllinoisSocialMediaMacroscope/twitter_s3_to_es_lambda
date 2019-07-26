@@ -168,6 +168,9 @@ def get_tweet(doc):
     tweet['user_mentions'] ['id_str'] = map(lambda x: x['id_str'],doc['entities']['user_mentions'])
     tweet['user_mentions'] ['name'] = map(lambda x: x['name'],doc['entities']['user_mentions'])
     tweet['user_mentions'] ['screen_name'] = map(lambda x: x['screen_name'],doc['entities']['user_mentions'])
-
+    tweet['media'] = {}
+    tweet['media']['id'] = map(lambda x: x['id'],doc['entities']['media'])
+    tweet['media']['media_url'] = map(lambda x: x['media_url'], doc['entities']['media'])
     # _sentiment_analysis(tweet) # commented out call to sentiments
     return tweet
+
